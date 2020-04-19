@@ -129,8 +129,8 @@ namespace MatchHistory
                 }
             }
 
-            Console.WriteLine("{0} of {1} ({2:0.00}%) had higher damage ratio than allies", gamesCucked, statsList.Count, gamesCucked / (double)statsList.Count);
-            Console.WriteLine("{0}W {1}L ({2:0.00}%) won", wins, throws, wins / (double)statsList.Count);
+            Console.WriteLine("{0} of {1} ({2:0.00}%) had higher damage ratio than allies", gamesCucked, statsList.Count, 100 * gamesCucked / (double)statsList.Count);
+            Console.WriteLine("{0}W {1}L ({2:0.00}%) won", wins, throws, 100 * wins / (double)statsList.Count);
             Console.WriteLine("Player is boosted: {0}", throws != 0);
         }
 

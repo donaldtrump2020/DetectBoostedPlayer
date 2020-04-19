@@ -27,7 +27,7 @@ Game 3378173706 lane ratio: 2.42 ally ratio: 0.74
 Game 3378086617 lane ratio: 0.57 ally ratio: 0.90
 Game 3378019346 lane ratio: 1.25 ally ratio: 0.63
 Game 3378030896 lane ratio: 0.97 ally ratio: 0.67
-10 of 18 (0.56%) had higher damage ratio than allies
-5W 13L (0.28%) won
+10 of 18 (55.56%) had higher damage ratio than allies
+5W 13L (27.78%) won
 Player is boosted: True
 ```
