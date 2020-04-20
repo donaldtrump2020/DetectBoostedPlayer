@@ -18,6 +18,9 @@ namespace MatchHistory
             internal bool IsScrub;
             internal double LaneDamageRatio;
             internal double AllyDamageRatio;
+            internal double GoldAtTenDiff;
+            internal double GoldEarlyMidGameDiff;
+            internal double TotalGoldDiff;
         }
 
         private RiotApi riotApi;
@@ -116,18 +119,41 @@ namespace MatchHistory
                 stats.IsScrub = !participant.Stats.Win;
                 stats.LaneDamageRatio = dmg / (double)opposingDmg;
                 stats.AllyDamageRatio = allyDmg / (double)enemyDmg;
+                stats.GoldAtTenDiff = participant.Timeline.GoldPerMinDeltas[Deltas.D0_10] - opposingLaner.Timeline.GoldPerMinDeltas[Deltas.D0_10];
+                stats.GoldEarlyMidGameDiff = participant.Timeline.GoldPerMinDeltas[Deltas.D10_20] - opposingLaner.Timeline.GoldPerMinDeltas[Deltas.D10_20];
+                stats.TotalGoldDiff = participant.Stats.GoldEarned - opposingLaner.Stats.GoldEarned;
+
                 statsList.Add(stats);
             }
 
             long gamesCucked = 0;
+            long gamesTrolling = 0;
+            long gamesTilted = 0;
+            long gamesThrown = 0;
             long wins = 0;
             long throws = 0;
             foreach (MatchStats stats in statsList)
             {
-                Console.WriteLine("Game {2} lane ratio: {0:0.00} ally ratio: {1:0.00}", stats.LaneDamageRatio, stats.AllyDamageRatio, stats.GameId);
+                Console.WriteLine("Game {2} lane ratio: {0:0.00} ally ratio: {1:0.00} GPM@10 {3:0.00}", stats.LaneDamageRatio, stats.AllyDamageRatio, stats.GameId, stats.GoldAtTenDiff);
+
                 if (stats.LaneDamageRatio > stats.AllyDamageRatio)
                 {
                     gamesCucked++;
+                }
+
+                if (stats.GoldAtTenDiff <= 0)
+                {
+                    gamesTrolling++;
+                }
+
+                if (stats.GoldEarlyMidGameDiff <= 0)
+                {
+                    gamesTilted++;
+                }
+
+                if (stats.TotalGoldDiff <= 0)
+                {
+                    gamesThrown++;
                 }
 
                 if (!stats.IsScrub)
@@ -140,6 +166,9 @@ namespace MatchHistory
             }
 
             Console.WriteLine("{0} of {1} ({2:0.00}%) had higher damage ratio than allies", gamesCucked, statsList.Count, 100 * gamesCucked / (double)statsList.Count);
+            Console.WriteLine("{0} of {1} ({2:0.00}%) had gold lead at 10 minutes", statsList.Count - gamesTrolling, statsList.Count, 100 * (statsList.Count - gamesTrolling) / (double)statsList.Count);
+            Console.WriteLine("{0} of {1} ({2:0.00}%) had higher GPM 10-20", statsList.Count - gamesTilted, statsList.Count, 100 * (statsList.Count - gamesTilted) / (double)statsList.Count);
+            Console.WriteLine("{0} of {1} ({2:0.00}%) had higher total gold", statsList.Count - gamesThrown, statsList.Count, 100 * (statsList.Count - gamesThrown) / (double)statsList.Count);
             Console.WriteLine("{0}W {1}L ({2:0.00}%) won", wins, throws, 100 * wins / (double)statsList.Count);
             Console.WriteLine("Player is boosted: {0}", throws != 0);
 
