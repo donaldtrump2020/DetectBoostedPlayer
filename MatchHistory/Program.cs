@@ -29,10 +29,13 @@ namespace MatchHistory
 
         public async Task<Summoner> GetSummoner(Region region, string summonerName, CancellationToken? cancellationToken = null)
         {
-            return await riotApi.SummonerV4.GetBySummonerNameAsync(region, summonerName, cancellationToken);
+            Summoner summoner = await riotApi.SummonerV4.GetBySummonerNameAsync(region, summonerName, cancellationToken);
+
+            Console.WriteLine("Resolved {0}", summoner.Name);
+            return summoner;
         }
 
-        public async Task Analyze(Region region, Summoner summoner, string[] roleFilter = null, string[] allyFilter = null)
+        public async Task<List<MatchStats>> Analyze(Region region, Summoner summoner, string[] roleFilter = null, string[] laneFilter = null, string[] allyFilter = null)
         {
             var matchList = await riotApi.MatchV4.GetMatchlistAsync(region, summoner.AccountId, null, new int[] { (int)QueueType.RANKED_SOLO_5x5 }, null, null, (long)SeasonTimestamp.SEASON_2020);
             Console.WriteLine("Retrieved match list with {0} entries", matchList.TotalGames);
@@ -55,6 +58,7 @@ namespace MatchHistory
                     .First(p => p.ParticipantId == participantId.ParticipantId);
                 var teamId = participant.TeamId;
                 var role = participant.Timeline.Role;
+                var lane = participant.Timeline.Lane;
 
                 if (match.GameDuration < 5 * 60)
                 {
@@ -73,7 +77,13 @@ namespace MatchHistory
                     continue;
                 }
 
-                var opposingLaner = match.Participants.FirstOrDefault(p => p.TeamId != teamId && p.Timeline.Role == role);
+                if (laneFilter != null && !laneFilter.Contains(lane))
+                {
+                    Console.WriteLine("Skipping game {0} with lane {1} ({2})", match.GameId, lane, ((Champion)participant.ChampionId).Name());
+                    continue;
+                }
+
+                var opposingLaner = match.Participants.FirstOrDefault(p => p.TeamId != teamId && p.Timeline.Role == role && p.Timeline.Lane == lane);
                 if (opposingLaner == null)
                 {
                     Console.WriteLine("Skipping game {0} with role {1} ({2}) failed to find opposing player", match.GameId, role, ((Champion)participant.ChampionId).Name());
@@ -132,16 +142,25 @@ namespace MatchHistory
             Console.WriteLine("{0} of {1} ({2:0.00}%) had higher damage ratio than allies", gamesCucked, statsList.Count, 100 * gamesCucked / (double)statsList.Count);
             Console.WriteLine("{0}W {1}L ({2:0.00}%) won", wins, throws, 100 * wins / (double)statsList.Count);
             Console.WriteLine("Player is boosted: {0}", throws != 0);
+
+            return statsList;
         }
 
         private static async Task MainAsync(string[] args)
         {
             string apiKey = File.ReadAllText("apikey.txt").Trim();
 
+            Region region = Region.NA;
+            string summonerName = "WHATSHENANIGANS";
+
+            string[] lane = new string[] { "BOTTOM" };
+            string[] role = new string[] { "DUO_CARRY" };
+            string[] allyLanes = new string[] { "TOP", "JUNGLE", "MIDDLE" };
+
             Program p = new Program(apiKey);
-            Summoner target = await p.GetSummoner(Region.NA, "WHATSHENANIGANS");
-            Console.WriteLine("Resolved {0}", target.Name);
-            await p.Analyze(Region.NA, target, new string[] {"DUO_CARRY"}, new string[] { "TOP", "JUNGLE", "MIDDLE" });
+            Summoner target = await p.GetSummoner(region, summonerName);
+
+            await p.Analyze(Region.NA, target, role, lane, allyLanes);
         }
 
         static void Main(string[] args)
