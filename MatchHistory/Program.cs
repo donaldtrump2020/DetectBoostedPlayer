@@ -8,7 +8,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices.ComTypes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -25,6 +24,7 @@ namespace MatchHistory
             internal double GoldAtTenDiff;
             internal double GoldEarlyMidGameDiff;
             internal double TotalGoldDiff;
+            internal double AllyGoldAtTenDiff;
         }
 
         private RiotApi riotApi;
@@ -160,6 +160,8 @@ namespace MatchHistory
                 var opposingDmg = opposingLaner.Stats.TotalDamageDealtToChampions;
                 long allyDmg = 0;
                 long enemyDmg = 0;
+                double allyGoldAtTenDiff = 0;
+                long allyCountDelta = 0;
 
                 foreach (var player in match.Participants)
                 {
@@ -169,10 +171,14 @@ namespace MatchHistory
                     if (player.TeamId == teamId)
                     {
                         allyDmg += player.Stats.TotalDamageDealtToChampions;
+                        allyGoldAtTenDiff += player.Timeline.GoldPerMinDeltas[Deltas.D0_10];
+                        allyCountDelta++;
                     }
                     else
                     {
                         enemyDmg += player.Stats.TotalDamageDealtToChampions;
+                        allyGoldAtTenDiff -= player.Timeline.GoldPerMinDeltas[Deltas.D0_10];
+                        allyCountDelta--;
                     }
                 }
 
@@ -193,6 +199,15 @@ namespace MatchHistory
                 }
                 stats.TotalGoldDiff = participant.Stats.GoldEarned - opposingLaner.Stats.GoldEarned;
 
+                if (allyCountDelta != 0)
+                {
+                    Console.WriteLine("Warning game {0} with role {1} ({2}) has imbalanced ally/enemy laner ratio", match.GameId, role, ((Champion)participant.ChampionId).Name());
+                }
+                else
+                {
+                    stats.AllyGoldAtTenDiff = allyGoldAtTenDiff;
+                }
+
                 statsList.Add(stats);
             }
 
@@ -200,15 +215,21 @@ namespace MatchHistory
             long gamesTrolling = 0;
             long gamesTilted = 0;
             long gamesThrown = 0;
+            long gamesHeavy = 0;
             long wins = 0;
             long throws = 0;
             foreach (MatchStats stats in statsList)
             {
-                Console.WriteLine("Game {2} lane ratio: {0:0.00} ally ratio: {1:0.00} GPM@10 {3:0.00}", stats.LaneDamageRatio, stats.AllyDamageRatio, stats.GameId, stats.GoldAtTenDiff);
+                Console.WriteLine("Game {2} LaneDR {0:0.00} AllyDR {1:0.00} G10 {3:0.00} AllyG10 {3:0.00}", stats.LaneDamageRatio, stats.AllyDamageRatio, stats.GameId, stats.GoldAtTenDiff, stats.AllyGoldAtTenDiff);
 
                 if (stats.LaneDamageRatio > stats.AllyDamageRatio)
                 {
                     gamesCucked++;
+                }
+
+                if (stats.AllyGoldAtTenDiff > 0)
+                {
+                    gamesHeavy++;
                 }
 
                 if (stats.GoldAtTenDiff <= 0)
@@ -239,6 +260,7 @@ namespace MatchHistory
             Console.WriteLine("{0} of {1} ({2:0.00}%) had gold lead at 10 minutes", statsList.Count - gamesTrolling, statsList.Count, 100 * (statsList.Count - gamesTrolling) / (double)statsList.Count);
             Console.WriteLine("{0} of {1} ({2:0.00}%) had higher GPM 10-20", statsList.Count - gamesTilted, statsList.Count, 100 * (statsList.Count - gamesTilted) / (double)statsList.Count);
             Console.WriteLine("{0} of {1} ({2:0.00}%) had higher total gold", statsList.Count - gamesThrown, statsList.Count, 100 * (statsList.Count - gamesThrown) / (double)statsList.Count);
+            Console.WriteLine("{0} of {1} ({2:0.00}%) allies had gold lead at 10 minutes", gamesHeavy, statsList.Count, 100 * (gamesHeavy) / (double)statsList.Count);
             Console.WriteLine("{0}W {1}L ({2:0.00}%) won", wins, throws, 100 * wins / (double)statsList.Count);
             Console.WriteLine("Player is boosted: {0}", throws != 0);
 
@@ -260,7 +282,7 @@ namespace MatchHistory
             string[] role =
                 new string[] { "DUO_CARRY" };     // e.g. DUO_CARRY, DUO_SUPPORT 
                 //null;
-            string[] allyLanes = new string[] { "TOP", "JUNGLE", "MIDDLE" };
+            string[] allyLanes = new string[] { "TOP", "JUNGLE", "MIDDLE", "NONE" };
 
             using (var db = new SqliteConnection("Data Source=cache.sqlite"))
             {
