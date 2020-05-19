@@ -294,10 +294,10 @@ namespace MatchHistory
                 Program p = new Program(apiKey, db);
                 Summoner target = await p.GetSummoner(region, summonerName);
 
-                var summonersRequired = await Task.WhenAll(requiredAllies.Select(async ally => { return await p.GetSummoner(region, ally); }).ToArray());
-                var summonersExcluded = await Task.WhenAll(excludedAllies.Select(async ally => { return await p.GetSummoner(region, ally); }).ToArray());
+                var summonersRequired = Task.WhenAll(requiredAllies.Select(async ally => { return await p.GetSummoner(region, ally); }).ToArray());
+                var summonersExcluded = Task.WhenAll(excludedAllies.Select(async ally => { return await p.GetSummoner(region, ally); }).ToArray());
 
-                await p.Analyze(Region.NA, target, summonersRequired, summonersExcluded, role, lane, allyLanes);
+                await p.Analyze(Region.NA, target, await summonersRequired, await summonersExcluded, role, lane, allyLanes);
             }
 
         }
