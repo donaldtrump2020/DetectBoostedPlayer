@@ -1,10 +1,14 @@
-﻿using MingweiSamuel.Camille;
+﻿using Microsoft.Data.Sqlite;
+using MingweiSamuel.Camille;
 using MingweiSamuel.Camille.Enums;
+using MingweiSamuel.Camille.MatchV4;
 using MingweiSamuel.Camille.SummonerV4;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices.ComTypes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -24,10 +28,12 @@ namespace MatchHistory
         }
 
         private RiotApi riotApi;
+        private SqliteConnection db;
 
-        public Program(string apiKey)
+        public Program(string apiKey, SqliteConnection db)
         {
-            riotApi = RiotApi.NewInstance(apiKey);
+            this.riotApi = RiotApi.NewInstance(apiKey);
+            this.db = db;
         }
 
         public async Task<Summoner> GetSummoner(Region region, string summonerName, CancellationToken? cancellationToken = null)
@@ -38,13 +44,39 @@ namespace MatchHistory
             return summoner;
         }
 
-        public async Task<List<MatchStats>> Analyze(Region region, Summoner summoner, string[] roleFilter = null, string[] laneFilter = null, string[] allyFilter = null)
+        public async Task<List<MatchStats>> Analyze(Region region, Summoner target, Summoner[] alliesRequired = null, Summoner[] alliesExcluded = null, string[] roleFilter = null, string[] laneFilter = null, string[] allyFilter = null)
         {
-            var matchList = await riotApi.MatchV4.GetMatchlistAsync(region, summoner.AccountId, null, new int[] { (int)QueueType.RANKED_SOLO_5x5 }, null, null, (long)SeasonTimestamp.SEASON_2020);
+            var matchList = await riotApi.MatchV4.GetMatchlistAsync(region, target.AccountId, null, new int[] { (int)QueueType.RANKED_SOLO_5x5 }, null, null, (long)SeasonTimestamp.SEASON_2020);
             Console.WriteLine("Retrieved match list with {0} entries", matchList.TotalGames);
+
             var matchTasks = matchList.Matches.Select(
-                    matchMetadata => riotApi.MatchV4.GetMatchAsync(Region.NA, matchMetadata.GameId)
-                ).ToArray();
+                                async matchDesc =>
+                                {
+                                    var selectCmd = db.CreateCommand();
+                                    selectCmd.CommandText = "select serialized from matches where id = $id";
+                                    selectCmd.Parameters.AddWithValue("$id", matchDesc.GameId);
+
+                                    using (var reader = await selectCmd.ExecuteReaderAsync())
+                                    {
+                                        if (await reader.ReadAsync() && reader.HasRows)
+                                        {
+                                            Console.WriteLine("Loaded game {0} from cache", matchDesc.GameId);
+                                            return JsonConvert.DeserializeObject<Match>(reader.GetString(0));
+                                        }
+                                        else
+                                        {
+                                            var match = await riotApi.MatchV4.GetMatchAsync(Region.NA, matchDesc.GameId);
+                                            var insertCmd = db.CreateCommand();
+                                            insertCmd.CommandText = "insert into matches (id, serialized) values ($id, $serialized)";
+                                            insertCmd.Parameters.AddWithValue("$id", matchDesc.GameId);
+                                            insertCmd.Parameters.AddWithValue("$serialized", JsonConvert.SerializeObject(match));
+                                            await insertCmd.ExecuteNonQueryAsync();
+                                            Console.WriteLine("Cached game {0}", matchDesc.GameId);
+                                            return match;
+                                        }
+                                    }
+                                }).ToArray();
+ 
             // Wait for all task requests to complete asynchronously.
             var matches = await Task.WhenAll(matchTasks);
 
@@ -55,13 +87,43 @@ namespace MatchHistory
                 var match = matches[i];
                 // Get this summoner's participant ID info.
                 var participantId = match.ParticipantIdentities
-                    .First(pi => summoner.Id.Equals(pi.Player.SummonerId));
+                    .First(pi => target.Id.Equals(pi.Player.SummonerId));
                 // Find the corresponding participant.
                 var participant = match.Participants
                     .First(p => p.ParticipantId == participantId.ParticipantId);
                 var teamId = participant.TeamId;
                 var role = participant.Timeline.Role;
                 var lane = participant.Timeline.Lane;
+
+                bool missingRequired = false;
+                foreach (Summoner required in alliesRequired)
+                {
+                    if (null == match.ParticipantIdentities.FirstOrDefault(pi => required.Id.Equals(pi.Player.SummonerId)))
+                    {
+                        Console.WriteLine("Skipping game without summoner {0} ({1})", match.GameId, required.Name);
+                        missingRequired = true;
+                        break;
+                    }
+                }
+                if (missingRequired)
+                {
+                    continue;
+                }
+
+                bool hasExclude = false;
+                foreach (Summoner exclude in alliesExcluded)
+                {
+                    if (null != match.ParticipantIdentities.FirstOrDefault(pi => exclude.Id.Equals(pi.Player.SummonerId)))
+                    {
+                        Console.WriteLine("Skipping game with summoner {0} ({1})", match.GameId, exclude.Name);
+                        hasExclude = true;
+                        break;
+                    }
+                }
+                if (hasExclude)
+                {
+                    continue;
+                }
 
                 if (match.GameDuration < 5 * 60)
                 {
@@ -120,7 +182,15 @@ namespace MatchHistory
                 stats.LaneDamageRatio = dmg / (double)opposingDmg;
                 stats.AllyDamageRatio = allyDmg / (double)enemyDmg;
                 stats.GoldAtTenDiff = participant.Timeline.GoldPerMinDeltas[Deltas.D0_10] - opposingLaner.Timeline.GoldPerMinDeltas[Deltas.D0_10];
-                stats.GoldEarlyMidGameDiff = participant.Timeline.GoldPerMinDeltas[Deltas.D10_20] - opposingLaner.Timeline.GoldPerMinDeltas[Deltas.D10_20];
+                try
+                {
+                    stats.GoldEarlyMidGameDiff = participant.Timeline.GoldPerMinDeltas[Deltas.D10_20] - opposingLaner.Timeline.GoldPerMinDeltas[Deltas.D10_20];
+                }
+                catch
+                {
+                    Console.WriteLine("Warning game {0} with role {1} ({2}) failed to find Deltas.D10_20", match.GameId, role, ((Champion)participant.ChampionId).Name());
+                    stats.GoldEarlyMidGameDiff = 0;
+                }
                 stats.TotalGoldDiff = participant.Stats.GoldEarned - opposingLaner.Stats.GoldEarned;
 
                 statsList.Add(stats);
@@ -181,15 +251,33 @@ namespace MatchHistory
 
             Region region = Region.NA;
             string summonerName = "WHATSHENANIGANS";
+            string[] requiredAllies = new string[] { summonerName, "TheFreezer" };
+            string[] excludedAllies = new string[] {  };
 
-            string[] lane = new string[] { "BOTTOM" };
-            string[] role = new string[] { "DUO_CARRY" };
+            string[] lane =
+                new string[] { "BOTTOM" };
+                //null;
+            string[] role =
+                new string[] { "DUO_CARRY" };     // e.g. DUO_CARRY, DUO_SUPPORT 
+                //null;
             string[] allyLanes = new string[] { "TOP", "JUNGLE", "MIDDLE" };
 
-            Program p = new Program(apiKey);
-            Summoner target = await p.GetSummoner(region, summonerName);
+            using (var db = new SqliteConnection("Data Source=cache.sqlite"))
+            {
+                db.Open();
+                var command = db.CreateCommand();
+                command.CommandText = "create table if not exists matches (id integer, serialized text)";
+                command.ExecuteNonQuery();
 
-            await p.Analyze(Region.NA, target, role, lane, allyLanes);
+                Program p = new Program(apiKey, db);
+                Summoner target = await p.GetSummoner(region, summonerName);
+
+                var summonersRequired = await Task.WhenAll(requiredAllies.Select(async ally => { return await p.GetSummoner(region, ally); }).ToArray());
+                var summonersExcluded = await Task.WhenAll(excludedAllies.Select(async ally => { return await p.GetSummoner(region, ally); }).ToArray());
+
+                await p.Analyze(Region.NA, target, summonersRequired, summonersExcluded, role, lane, allyLanes);
+            }
+
         }
 
         static void Main(string[] args)
